@@ -356,6 +356,108 @@ binary_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 
 /****************************************************************************
+ * Emit an "Out_Blocked" record for a source IP that has been detected
+ * scanning us and blocked.
+ *
+ * Record layout on the wire:
+ *   [TYPE]        1 byte    = Out_Blocked (14)
+ *   [LENGTH]      1 or 2 bytes (high-bit continuation, matches banner)
+ *   [TIMESTAMP]   4 bytes   big-endian
+ *   [IP_VERSION]  1 byte    = 4 or 6
+ *   [IP]          4 bytes if v4, 16 bytes if v6
+ *   [SIGNALS]     variable  null-terminated ASCII string (may be empty)
+ ****************************************************************************/
+static void
+binary_out_blocked(struct Output *out, FILE *fp,
+                   time_t timestamp, ipaddress ip,
+                   const char *signals)
+{
+    unsigned char foo[32768];
+    unsigned i;
+    size_t bytes_written;
+    size_t signals_len;
+    size_t payload_len;
+    size_t ip_len;
+    size_t total_len;
+    const char *signals_str = signals ? signals : "";
+
+    /* Fixed portion of payload: 4-byte timestamp + 1-byte ip.version +
+     * IP address bytes. Then the signals string with its trailing NUL. */
+    ip_len = (ip.version == 6) ? 16 : 4;
+    signals_len = strlen(signals_str) + 1; /* include trailing NUL */
+    payload_len = 4 + 1 + ip_len + signals_len;
+
+    /* Cap the signals string so the total record length still fits
+     * within the 2-byte length encoding used by this format. */
+    if (payload_len >= 128 * 128) {
+        signals_len = (128 * 128) - (4 + 1 + ip_len) - 1;
+        payload_len = 4 + 1 + ip_len + signals_len;
+    }
+
+    /* [TYPE] field */
+    foo[0] = Out_Blocked;
+
+    /* [LENGTH] field: 1-byte if payload_len < 128, else 2-byte with
+     * high-bit continuation on the first byte. */
+    if (payload_len < 128) {
+        foo[1] = (unsigned char)payload_len;
+        i = 2;
+    } else {
+        foo[1] = (unsigned char)((payload_len >> 7) | 0x80);
+        foo[2] = (unsigned char)(payload_len & 0x7F);
+        i = 3;
+    }
+
+    /* [TIMESTAMP] field */
+    foo[i+0] = (unsigned char)(timestamp>>24);
+    foo[i+1] = (unsigned char)(timestamp>>16);
+    foo[i+2] = (unsigned char)(timestamp>> 8);
+    foo[i+3] = (unsigned char)(timestamp>> 0);
+
+    /* [IP_VERSION] field */
+    foo[i+4] = (unsigned char)(ip.version);
+
+    /* [IP] field */
+    if (ip.version == 6) {
+        foo[i+ 5] = (unsigned char)(ip.ipv6.hi >> 56ULL);
+        foo[i+ 6] = (unsigned char)(ip.ipv6.hi >> 48ULL);
+        foo[i+ 7] = (unsigned char)(ip.ipv6.hi >> 40ULL);
+        foo[i+ 8] = (unsigned char)(ip.ipv6.hi >> 32ULL);
+        foo[i+ 9] = (unsigned char)(ip.ipv6.hi >> 24ULL);
+        foo[i+10] = (unsigned char)(ip.ipv6.hi >> 16ULL);
+        foo[i+11] = (unsigned char)(ip.ipv6.hi >>  8ULL);
+        foo[i+12] = (unsigned char)(ip.ipv6.hi >>  0ULL);
+        foo[i+13] = (unsigned char)(ip.ipv6.lo >> 56ULL);
+        foo[i+14] = (unsigned char)(ip.ipv6.lo >> 48ULL);
+        foo[i+15] = (unsigned char)(ip.ipv6.lo >> 40ULL);
+        foo[i+16] = (unsigned char)(ip.ipv6.lo >> 32ULL);
+        foo[i+17] = (unsigned char)(ip.ipv6.lo >> 24ULL);
+        foo[i+18] = (unsigned char)(ip.ipv6.lo >> 16ULL);
+        foo[i+19] = (unsigned char)(ip.ipv6.lo >>  8ULL);
+        foo[i+20] = (unsigned char)(ip.ipv6.lo >>  0ULL);
+    } else {
+        foo[i+5] = (unsigned char)(ip.ipv4 >> 24);
+        foo[i+6] = (unsigned char)(ip.ipv4 >> 16);
+        foo[i+7] = (unsigned char)(ip.ipv4 >>  8);
+        foo[i+8] = (unsigned char)(ip.ipv4 >>  0);
+    }
+
+    /* [SIGNALS] field: copy the string plus trailing NUL. If we had
+     * to truncate, force a NUL at the very end so the reader is safe. */
+    memcpy(foo + i + 4 + 1 + ip_len, signals_str, signals_len);
+    foo[i + 4 + 1 + ip_len + signals_len - 1] = '\0';
+
+    total_len = i + payload_len;
+    bytes_written = fwrite(&foo, 1, total_len, fp);
+    if (bytes_written != total_len) {
+        perror("output");
+        exit(1);
+    }
+    out->rotate.bytes_written += bytes_written;
+}
+
+
+/****************************************************************************
  ****************************************************************************/
 const struct OutputType binary_output = {
     "scan",
@@ -364,6 +466,7 @@ const struct OutputType binary_output = {
     binary_out_close,
     binary_out_status,
     binary_out_banner,
+    binary_out_blocked,
 };
 
 

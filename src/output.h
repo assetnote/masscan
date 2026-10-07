@@ -38,6 +38,9 @@ struct OutputType {
                    unsigned port, enum ApplicationProtocol proto,
                    unsigned ttl,
                    const unsigned char *px, unsigned length);
+    void (*blocked)(struct Output *out, FILE *fp,
+                    time_t timestamp, ipaddress ip,
+                    const char *signals);
 };
 
 /**
@@ -185,6 +188,19 @@ void output_report_banner(
                 unsigned proto,
                 unsigned ttl,
                 const unsigned char *px, unsigned length);
+
+/**
+ * Emit a host-level "blocked" record when the receive thread detects
+ * that a target is an IDS/tarpit/port-spoofing middlebox. `signals`
+ * is a comma-separated list of packet-level signal names produced by
+ * main-hostflag (e.g., "zero_window,high_port_count"). Emitting a
+ * blocked record does NOT alter subsequent output - the caller is
+ * responsible for suppressing further per-port records for this host.
+ */
+void output_report_blocked(struct Output *output,
+                           time_t timestamp,
+                           ipaddress ip,
+                           const char *signals);
 
 /**
  * Regression tests this unit.

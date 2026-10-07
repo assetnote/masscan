@@ -133,12 +133,39 @@ xml_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 /****************************************************************************
  ****************************************************************************/
+static void
+xml_out_blocked(struct Output *out, FILE *fp,
+                time_t timestamp, ipaddress ip,
+                const char *signals)
+{
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+
+    UNUSEDPARM(out);
+
+    /* Signal names are a fixed vocabulary controlled by main-hostflag.c
+     * (e.g. zero_window, uniform_window, uniform_ttl, high_port_count,
+     * synack_retransmit), so no XML escaping is necessary. */
+    fprintf(fp, "<host endtime=\"%u\">"
+                    "<address addr=\"%s\" addrtype=\"%s\"/>"
+                    "<blocked reason=\"%s\"/>"
+                "</host>"
+                "\r\n",
+        (unsigned)timestamp,
+        fmt.string,
+        name_from_ip_version(ip.version),
+        signals ? signals : ""
+        );
+}
+
+/****************************************************************************
+ ****************************************************************************/
 const struct OutputType xml_output = {
     "xml",
     0,
     xml_out_open,
     xml_out_close,
     xml_out_status,
-    xml_out_banner
+    xml_out_banner,
+    xml_out_blocked
 };
 

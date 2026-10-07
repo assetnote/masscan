@@ -75,13 +75,28 @@ text_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 /****************************************************************************
  ****************************************************************************/
+static void
+text_out_blocked(struct Output *out, FILE *fp,
+                 time_t timestamp, ipaddress ip,
+                 const char *signals)
+{
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+    UNUSEDPARM(out);
+    UNUSEDPARM(timestamp);
+    fprintf(fp, "Blocked scan on %s (%s)\n", fmt.string, signals ? signals : "");
+}
+
+
+/****************************************************************************
+ ****************************************************************************/
 const struct OutputType text_output = {
     "txt",
     0,
     text_out_open,
     text_out_close,
     text_out_status,
-    text_out_banner
+    text_out_banner,
+    text_out_blocked
 };
 
 

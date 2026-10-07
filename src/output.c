@@ -881,6 +881,80 @@ output_report_status(struct Output *out, time_t timestamp, int status,
 
 
 /***************************************************************************
+ * Report a host-level "blocked" record. This is called from the receive
+ * thread when main-hostflag detects an IDS/tarpit/port-spoofing signal
+ * against a host. Unlike output_report_status, this is a host-level
+ * event (not per-port), and it flows through the per-backend `blocked`
+ * callback if the backend implements one. Backends that leave the
+ * callback NULL will silently omit the record.
+ ***************************************************************************/
+void
+output_report_blocked(struct Output *out, time_t timestamp,
+                      ipaddress ip, const char *signals)
+{
+    FILE *fp = out->fp;
+    time_t now = time(0);
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+
+    global_now = now;
+
+    if (signals == NULL)
+        signals = "";
+
+    /* If in "--interactive" mode, then print to the command-line screen,
+     * mirroring output_report_status. */
+    if (out->is_interactive || out->format == 0 || out->format == Output_Interactive) {
+        unsigned count;
+
+        count = fprintf(stdout, "Blocked scan on %s (%s)",
+                    fmt.string, signals);
+
+        /* Because this line may overwrite the "%done" status line, print
+         * some spaces afterward to completely cover up the line */
+        if (count < 80)
+            fprintf(stdout, "%.*s", (int)(79-count),
+                    "                                          "
+                    "                                          ");
+
+        fprintf(stdout, "\n");
+        fflush(stdout);
+
+    } else if (fp == NULL) {
+        ERRMSG("no output file, use `--output-filename <filename>` to set one\n");
+        ERRMSG("for `stdout`, use `--output-filename -`\n");
+        return;
+    }
+
+    /* Rotate, if we've pass the time limit. */
+    if (is_rotate_time(out, now, fp)) {
+        fp = output_do_rotate(out, 0);
+        if (fp == NULL)
+            return;
+    }
+
+    /*
+     * If this is a newly opened file, then write file headers
+     */
+    if (out->is_virgin_file) {
+        out->funcs->open(out, fp);
+        out->is_virgin_file = 0;
+    }
+
+    /*
+     * Dispatch to the backend-specific implementation, if any. Backends
+     * that don't implement `blocked` leave the pointer NULL and the
+     * record is silently omitted from that output.
+     */
+    if (out->funcs->blocked != NULL) {
+        out->funcs->blocked(out, fp, timestamp, ip, signals);
+    }
+
+    if (out->is_output_flush)
+        fflush(fp);
+}
+
+
+/***************************************************************************
  ***************************************************************************/
 void
 output_report_banner(struct Output *out, time_t now,

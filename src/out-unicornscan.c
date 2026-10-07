@@ -76,8 +76,19 @@ unicornscan_out_banner(struct Output *out, FILE *fp, time_t timestamp,
     UNUSEDPARM(length);
 
     return;
-} 
- 
+}
+
+
+static void
+unicornscan_out_blocked(struct Output *out, FILE *fp,
+                        time_t timestamp, ipaddress ip,
+                        const char *signals)
+{
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+    UNUSEDPARM(out);
+    UNUSEDPARM(timestamp);
+    fprintf(fp, "# blocked %s reason=%s\n", fmt.string, signals ? signals : "");
+}
 
 
 /****************************************************************************
@@ -88,7 +99,8 @@ const struct OutputType unicornscan_output = {
     unicornscan_out_open,
     unicornscan_out_close,
     unicornscan_out_status,
-    unicornscan_out_banner
+    unicornscan_out_banner,
+    unicornscan_out_blocked
 };
 
 

@@ -594,6 +594,101 @@ a chronically slow operation on CPUs. Modern CPUs have doubled the speed
 at which they perform this calculation, making `masscan` much faster.
 
 
+# Detecting IDS/tarpit responses (--flag-hosts-after)
+
+This section documents a fork-specific flag. Upstream masscan does not
+implement this behavior.
+
+## What it does
+
+When `--flag-hosts-after` is set, masscan tracks per-host state during the
+scan: open-port count, SYN-ACK TCP window sizes, IP TTL values, and dedup
+retransmission counts. If a host trips a passive detection signal, masscan
+emits a single `<blocked reason="..."/>` record for that host and suppresses
+further per-port records for it. The intent is to avoid ingesting thousands
+of fake "open port" findings from targets behind Portspoof-style responders,
+iptables `-j TARPIT`, LaBrea, PAN-OS or Fortinet SYN-cookie flood protection,
+or F5 BIG-IP wildcard responders.
+
+## Usage
+
+Flag any host that reaches 100 open ports:
+
+    # masscan -p 1-65535 --rate 100000 --flag-hosts-after 100 10.0.0.0/24
+
+Flag any host where 50% or more of the probed ports come back open:
+
+    # masscan -p 22,80,443,8080 --flag-hosts-after 50% 10.0.0.0/24
+
+## Flag syntax
+
+* `--flag-hosts-after N` — absolute open-port count. `N` must be strictly
+  less than the size of the resolved `-p` port list. Fails validation at
+  startup otherwise.
+* `--flag-hosts-after N%` — percent of the resolved `-p` port list, with
+  `N` in the range `1..99`.
+* The two forms are mutually exclusive.
+* `--zero-window-threshold N` — how many window==0 SYN-ACKs from a single
+  host are required before `zero_window` fires. Positive integer in the
+  range `1..65535`, default `5`. Has effect only alongside
+  `--flag-hosts-after`.
+
+LZR reports 99.94% zero-window stability across ports, so a single
+observation is statistically defensible; the threshold exists because a
+sparse scan against a badly misconfigured host can produce one spurious
+window==0 packet, and the extra counter costs one comparison per SYN-ACK.
+
+## Signals emitted
+
+The `reason=` attribute is a comma-separated list drawn from the following
+packet-level signal names:
+
+* `zero_window` — SYN-ACK carries TCP window size 0. Signature of iptables
+  `-j TARPIT` and LaBrea. Fires once `--zero-window-threshold` such
+  observations have accumulated for the host (default 5).
+* `uniform_window` — at least 10 open ports observed AND all SYN-ACKs share
+  the same TCP window size. Common with SYN-cookie proxies.
+* `uniform_ttl` — at least 10 open ports observed AND all responses share
+  the same IP TTL. Suggests a single middlebox answering for the host.
+* `high_port_count` — host reached the `--flag-hosts-after` threshold.
+* `synack_retransmit` — the same (host, port) SYN-ACK was seen at least 5
+  times, indicating masscan's ACK is not reaching a real endpoint
+  (mid-handshake drop pattern).
+
+## Output shape
+
+XML output for a flagged host looks like:
+
+```
+<host addr="10.0.0.5">
+  <blocked reason="zero_window,high_port_count"/>
+</host>
+```
+
+Block records are emitted through every configured output backend (XML,
+JSON, NDJSON, grepable, text, binary, Redis). Backends that lack a natural
+host-level record produce a best-effort representation (for example, a
+comment line in `grepable`).
+
+## Behavior notes
+
+* When the flag is absent, masscan behavior is unchanged from upstream.
+* Once a host is flagged, further SYN-ACKs for that host are dropped
+  silently. Prior per-port records that were already emitted for the same
+  host remain in the output stream; downstream consumers are responsible
+  for reconciling them against the block record.
+* The per-host state table is fixed-size and accepts hash collisions
+  silently, so occasional false negatives are possible on very large scans.
+
+## References
+
+* Izhikevich, Teixeira, Durumeric. *LZR: Identifying Unexpected Internet
+  Services.* USENIX Security '21. The signal taxonomy above follows the
+  vocabulary from this paper: <https://zakird.com/papers/lzr.pdf>.
+* Bosamiya. `--ignore-after` proposal on nmap-dev, origin of the
+  `N,PERCENT` flag idea: <https://seclists.org/nmap-dev/2014/q3/100>.
+
+
 # Authors
 
 This tool created by Robert Graham:

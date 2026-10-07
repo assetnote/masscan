@@ -79,6 +79,25 @@ cert_out_banner(struct Output *out, FILE *fp, time_t timestamp,
     printf("-----END CERTIFICATE-----\n");
 }
 
+/******************************************************************************
+ * The certs backend only surfaces TLS certificates. A host-level block
+ * record has no natural representation here, so this is an intentional
+ * no-op stub (required so the dispatcher can invoke it without crashing).
+ ******************************************************************************/
+static void
+cert_out_blocked(struct Output *out, FILE *fp,
+                 time_t timestamp, ipaddress ip,
+                 const char *signals)
+{
+    UNUSEDPARM(out);
+    UNUSEDPARM(fp);
+    UNUSEDPARM(timestamp);
+    UNUSEDPARM(ip);
+    UNUSEDPARM(signals);
+    /* certs output only surfaces TLS certificates; block records
+     * have no natural representation here. Intentional no-op. */
+}
+
 /****************************************************************************
  ****************************************************************************/
 const struct OutputType certs_output = {
@@ -87,6 +106,7 @@ const struct OutputType certs_output = {
     cert_out_open,
     cert_out_close,
     cert_out_status,
-    cert_out_banner
+    cert_out_banner,
+    cert_out_blocked
 };
 

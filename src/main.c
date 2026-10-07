@@ -23,6 +23,7 @@
 #include "main-status.h"        /* printf() regular status updates */
 #include "main-throttle.h"      /* rate limit */
 #include "main-dedup.h"         /* ignore duplicate responses */
+#include "main-hostflag.h"      /* --flag-hosts-after: IDS/tarpit detection */
 #include "main-ptrace.h"        /* for nmap --packet-trace feature */
 #include "main-globals.h"       /* all the global variables in the program */
 #include "main-readrange.h"
@@ -538,6 +539,7 @@ receive_thread(void *v)
     int data_link = stack_if_datalink(adapter);
     struct Output *out;
     struct DedupTable *dedup;
+    struct HostFlagTable *hostflag = NULL;
     struct PcapFile *pcapfile = NULL;
     struct TCP_ConnectionTable *tcpcon = 0;
     uint64_t *status_synack_count;
@@ -597,6 +599,28 @@ receive_thread(void *v)
      * multiple responses, we only record the first one.
      */
     dedup = dedup_create();
+
+    /*
+     * Create the per-host flagging table for --flag-hosts-after. Resolves
+     * the effective absolute open-port threshold from either the raw
+     * absolute value or the percent-of-`-p` value. Passing 0 disables the
+     * feature entirely (hostflag_create returns NULL, and every call site
+     * checks for that).
+     */
+    if (masscan->hostflag.threshold_type != 0) {
+        unsigned effective_threshold = 0;
+        unsigned port_count = rangelist_count(&masscan->targets.ports);
+        if (masscan->hostflag.threshold_type == HOSTFLAG_THRESHOLD_PERCENT) {
+            /* percent of resolved -p list; rounded down but floored at 1 */
+            effective_threshold = (port_count * masscan->hostflag.threshold_value) / 100;
+            if (effective_threshold == 0)
+                effective_threshold = 1;
+        } else {
+            effective_threshold = masscan->hostflag.threshold_value;
+        }
+        hostflag = hostflag_create(effective_threshold,
+                                   masscan->hostflag.zero_window_threshold);
+    }
 
     /*
      * Create a TCP connection table (per thread pair) for interacting with live
@@ -1063,9 +1087,63 @@ receive_thread(void *v)
                 continue;
             }
 
-            /* verify: ignore duplicates */
-            if (dedup_is_duplicate(dedup, ip_them, port_them, ip_me, port_me))
-                continue;
+            /* verify: ignore duplicates
+             * Note: for --flag-hosts-after we still want to know when a
+             * duplicate SYN-ACK arrives (it's a signal). Capture that below
+             * before the normal duplicate-skip. */
+            {
+                unsigned is_synack_retransmit = 0;
+                if (dedup_is_duplicate(dedup, ip_them, port_them, ip_me, port_me)) {
+                    is_synack_retransmit = 1;
+                }
+
+                /* --flag-hosts-after: observe this packet against the per-host
+                 * detector, but only for SYN-ACKs (open ports). RSTs don't
+                 * count toward IDS heuristics. Also suppress output entirely
+                 * for hosts already in the FLAGGED state. */
+                if (hostflag != NULL && TCP_IS_SYNACK(px, parsed.transport_offset)) {
+                    if (hostflag_is_flagged(hostflag, ip_them)) {
+                        /* Already flagged: drop this SYN-ACK silently, do not
+                         * emit a port record. Still count it toward stats. */
+                        (*status_synack_count)++;
+                        continue;
+                    }
+                    if (!is_synack_retransmit) {
+                        unsigned tcp_window = (px[parsed.transport_offset + 14] << 8)
+                                              | px[parsed.transport_offset + 15];
+                        unsigned signals = hostflag_observe(
+                                    hostflag,
+                                    ip_them,
+                                    tcp_window,
+                                    parsed.ip_ttl,
+                                    0 /* not a retransmit here */);
+                        if (signals != 0) {
+                            char reason_buf[128];
+                            hostflag_signals_to_string(signals, reason_buf, sizeof(reason_buf));
+                            output_report_blocked(out, global_now, ip_them, reason_buf);
+                            (*status_synack_count)++;
+                            continue; /* skip the normal port record */
+                        }
+                    } else {
+                        /* Duplicate SYN-ACK: feed it as a retransmit signal. */
+                        unsigned signals = hostflag_observe(
+                                    hostflag,
+                                    ip_them,
+                                    0 /* window unused when retransmit */,
+                                    0 /* ttl unused when retransmit */,
+                                    1 /* is_synack_retransmit */);
+                        if (signals != 0) {
+                            char reason_buf[128];
+                            hostflag_signals_to_string(signals, reason_buf, sizeof(reason_buf));
+                            output_report_blocked(out, global_now, ip_them, reason_buf);
+                        }
+                        /* Fall through: retransmits are still deduped below. */
+                    }
+                }
+
+                if (is_synack_retransmit)
+                    continue;
+            }
 
             /* keep statistics on number received */
             if (TCP_IS_SYNACK(px, parsed.transport_offset))
@@ -1112,6 +1190,7 @@ end:
     if (tcpcon)
         tcpcon_destroy_table(tcpcon);
     dedup_destroy(dedup);
+    hostflag_destroy(hostflag);
     output_destroy(out);
     if (pcapfile)
         pcapfile_close(pcapfile);
@@ -1821,6 +1900,7 @@ int main(int argc, char *argv[])
             x += massip_selftest();
             x += ranges6_selftest();
             x += dedup_selftest();
+            x += hostflag_selftest();
             x += checksum_selftest();
             x += ipv4address_selftest();
             x += ipv6address_selftest();

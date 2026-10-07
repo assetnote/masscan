@@ -133,6 +133,37 @@ json_out_banner(struct Output *out, FILE *fp, time_t timestamp,
     UNUSEDPARM(out);
 }
 
+/******************************************************************************
+ ******************************************************************************/
+static void
+json_out_blocked(struct Output *out, FILE *fp,
+                 time_t timestamp, ipaddress ip,
+                 const char *signals)
+{
+    ipaddress_formatted_t fmt;
+
+    /* Signal names are a fixed vocabulary from main-hostflag.c
+     * (zero_window, uniform_window, uniform_ttl, high_port_count,
+     *  synack_retransmit) - no JSON-hostile characters, so no escaping. */
+
+    /* Trailing comma breaks some JSON parsers. We don't know precisely when
+     * we'll end, but we do know when we begin, so instead of appending
+     * a command to the record, we prepend it -- but not before first record */
+    if (out->is_first_record_seen)
+        fprintf(fp, ",\n");
+    else
+        out->is_first_record_seen = 1;
+
+    fprintf(fp, "{ ");
+    fmt = ipaddress_fmt(ip);
+    fprintf(fp, "  \"ip\": \"%s\", ", fmt.string);
+    fprintf(fp, "  \"timestamp\": \"%u\", \"blocked\": {\"reason\": \"%s\"} ",
+            (unsigned)timestamp,
+            signals ? signals : ""
+            );
+    fprintf(fp, "}\n");
+}
+
 /****************************************************************************
  ****************************************************************************/
 const struct OutputType json_output = {
@@ -141,5 +172,6 @@ const struct OutputType json_output = {
     json_out_open,
     json_out_close,
     json_out_status,
-    json_out_banner
+    json_out_banner,
+    json_out_blocked
 };

@@ -339,13 +339,84 @@ redis_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 /****************************************************************************
  ****************************************************************************/
+static void
+redis_out_blocked(struct Output *out, FILE *fp, time_t timestamp,
+                  ipaddress ip, const char *signals)
+{
+    ptrdiff_t fd = (ptrdiff_t)fp;
+    char line[1024];
+    int line_length;
+    char ip_string[64];
+    int ip_string_length;
+    size_t count;
+    char values[256];
+    int values_length;
+    const char *reason;
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+
+    /* Signal vocabulary is fixed by main-hostflag.c */
+    reason = signals ? signals : "";
+
+    ip_string_length = snprintf(ip_string, sizeof(ip_string), "%s", fmt.string);
+
+    /*
+     * KEY: "blocked"
+     * VALUE: ip
+     */
+    snprintf(line, sizeof(line),
+            "*3\r\n"
+            "$4\r\nSADD\r\n"
+            "$%d\r\n%s\r\n"
+            "$%d\r\n%s\r\n"
+            ,
+            7, "blocked",
+            ip_string_length, ip_string
+            );
+
+    count = send((SOCKET)fd, line, (int)strlen(line), 0);
+    if (count != strlen(line)) {
+        LOG(0, "redis: error sending data\n");
+        exit(1);
+    }
+    out->redis.outstanding++;
+
+    /*
+     * KEY: blocked:ip
+     * VALUE: timestamp:signals
+     */
+    values_length = snprintf(values, sizeof(values), "%u:%s",
+        (unsigned)timestamp, reason);
+    line_length = snprintf(line, sizeof(line),
+            "*3\r\n"
+            "$4\r\nSADD\r\n"
+            "$%d\r\nblocked:%s\r\n"
+            "$%d\r\n%s\r\n"
+            ,
+            8 + ip_string_length, ip_string,
+            values_length, values
+            );
+
+    count = send((SOCKET)fd, line, (int)line_length, 0);
+    if (count != (size_t)line_length) {
+        LOG(0, "redis: error sending data\n");
+        exit(1);
+    }
+    out->redis.outstanding++;
+
+    clean_response_queue(out, (SOCKET)fd);
+}
+
+
+/****************************************************************************
+ ****************************************************************************/
 const struct OutputType redis_output = {
     "redis",
     0,
     redis_out_open,
     redis_out_close,
     redis_out_status,
-    redis_out_banner
+    redis_out_banner,
+    redis_out_blocked
 };
 
 

@@ -12,6 +12,7 @@
 
 */
 #include "masscan.h"
+#include "main-hostflag.h"
 #include "massip-addr.h"
 #include "masscan-version.h"
 #include "util-safefunc.h"
@@ -1565,6 +1566,87 @@ static int SET_noreset(struct Masscan *masscan, const char *name, const char *va
     return CONF_OK;
 }
 
+static int SET_flag_hosts_after(struct Masscan *masscan, const char *name, const char *value)
+{
+    UNUSEDPARM(name);
+    if (masscan->echo) {
+        if (masscan->hostflag.threshold_type != 0 || masscan->echo_all) {
+            const char *type_str = "";
+            if (masscan->hostflag.threshold_type == 1) type_str = "";
+            else if (masscan->hostflag.threshold_type == 2) type_str = "%";
+            fprintf(masscan->echo, "flag-hosts-after = %u%s\n",
+                    masscan->hostflag.threshold_value, type_str);
+        }
+        return 0;
+    }
+    /* Parse "<int>%" or "<int>" */
+    if (value == NULL || value[0] == '\0') {
+        fprintf(stderr, "[-] FAIL: --flag-hosts-after requires a value (e.g. 100 or 50%%)\n");
+        exit(1);
+    }
+    {
+        char *endptr = NULL;
+        unsigned long parsed;
+        size_t vlen = strlen(value);
+        int is_percent = 0;
+        if (vlen > 0 && value[vlen-1] == '%') {
+            is_percent = 1;
+        }
+        parsed = strtoul(value, &endptr, 10);
+        /* Must have consumed at least one digit, and any trailing must be exactly "" or "%". */
+        if (endptr == value || (*endptr != '\0' && !(is_percent && *endptr == '%' && *(endptr+1) == '\0'))) {
+            fprintf(stderr, "[-] FAIL: --flag-hosts-after: invalid value '%s' (expected e.g. 100 or 50%%)\n", value);
+            exit(1);
+        }
+        if (is_percent) {
+            if (parsed < 1 || parsed > 99) {
+                fprintf(stderr, "[-] FAIL: --flag-hosts-after: percent value must be in range 1%%-99%% (got %lu%%)\n", parsed);
+                exit(1);
+            }
+            masscan->hostflag.threshold_type = 2;
+            masscan->hostflag.threshold_value = (unsigned)parsed;
+        } else {
+            if (parsed < 1 || parsed > 0xFFFFFFFF) {
+                fprintf(stderr, "[-] FAIL: --flag-hosts-after: absolute value must be a positive integer (got '%s')\n", value);
+                exit(1);
+            }
+            masscan->hostflag.threshold_type = 1;
+            masscan->hostflag.threshold_value = (unsigned)parsed;
+        }
+    }
+    return CONF_OK;
+}
+
+static int SET_zero_window_threshold(struct Masscan *masscan, const char *name, const char *value)
+{
+    UNUSEDPARM(name);
+
+    if (masscan->echo) {
+        if (masscan->hostflag.zero_window_threshold != 0 || masscan->echo_all) {
+            fprintf(masscan->echo, "zero-window-threshold = %u\n",
+                    masscan->hostflag.zero_window_threshold
+                        ? masscan->hostflag.zero_window_threshold
+                        : HOSTFLAG_DEFAULT_ZERO_WINDOW_THRESHOLD);
+        }
+        return 0;
+    }
+    if (value == NULL || value[0] == '\0') {
+        fprintf(stderr, "[-] FAIL: --zero-window-threshold requires a positive integer\n");
+        exit(1);
+    }
+    {
+        char *endptr = NULL;
+        unsigned long parsed = strtoul(value, &endptr, 10);
+        if (endptr == value || *endptr != '\0' || parsed < 1 || parsed > 0xFFFF) {
+            fprintf(stderr, "[-] FAIL: --zero-window-threshold: expected a positive integer "
+                            "in range 1-65535 (got '%s')\n", value);
+            exit(1);
+        }
+        masscan->hostflag.zero_window_threshold = (unsigned)parsed;
+    }
+    return CONF_OK;
+}
+
 static int SET_nmap_payloads(struct Masscan *masscan, const char *name, const char *value)
 {
     UNUSEDPARM(name);
@@ -2379,6 +2461,8 @@ struct ConfigParameter config_parameters[] = {
     {"nobanners",       SET_nobanners,          F_BOOL, {"nobanner",0}},
     {"retries",         SET_retries,            0,      {"retry", "max-retries", "max-retry", 0}},
     {"noreset",         SET_noreset,            F_BOOL, {0}},
+    {"flag-hosts-after",SET_flag_hosts_after,   0,      {0}},
+    {"zero-window-threshold",SET_zero_window_threshold, 0, {0}},
     {"nmap-payloads",   SET_nmap_payloads,      0,      {"nmap-payload",0}},
     {"nmap-service-probes",SET_nmap_service_probes, 0,  {"nmap-service-probe",0}},
     {"offline",         SET_offline,            F_BOOL, {"notransmit", "nosend", "dry-run", 0}},
@@ -3204,6 +3288,35 @@ masscan_load_database_files(struct Masscan *masscan)
 }
 
 /***************************************************************************
+ * Cross-flag validation for --flag-hosts-after. Called at the end of
+ * command-line parsing so that both the flag and the -p port list are
+ * fully resolved. When the feature is disabled (threshold_type == 0),
+ * this is a no-op.
+ ***************************************************************************/
+static void
+masscan_hostflag_validate(struct Masscan *masscan)
+{
+    unsigned port_count;
+    if (masscan->hostflag.threshold_type == 0)
+        return; /* feature disabled */
+
+    port_count = (unsigned)rangelist_count(&masscan->targets.ports);
+    if (port_count == 0)
+        return; /* no ports specified yet; other validation will complain */
+
+    if (masscan->hostflag.threshold_type == 1) {
+        /* Absolute: must be strictly less than port count. */
+        if (masscan->hostflag.threshold_value >= port_count) {
+            fprintf(stderr,
+                "[-] FAIL: --flag-hosts-after %u must be less than the port count from -p (%u)\n",
+                masscan->hostflag.threshold_value, port_count);
+            exit(1);
+        }
+    }
+    /* Percent: already validated to be in 1..99 at parse time; no cross-flag check needed. */
+}
+
+/***************************************************************************
  * Read the configuration from the command-line.
  * Called by 'main()' when starting up.
  ***************************************************************************/
@@ -3625,6 +3738,9 @@ masscan_command_line(struct Masscan *masscan, int argc, char *argv[])
     if (masscan->shard.of > 1 && masscan->seed == 0) {
         fprintf(stderr, "[-] WARNING: --seed <num> is not specified\n    HINT: all shards must share the same seed\n");
     }
+
+    /* Cross-flag validation for --flag-hosts-after against the resolved -p count. */
+    masscan_hostflag_validate(masscan);
 }
 
 /***************************************************************************

@@ -67,6 +67,23 @@ hostonly_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 
 /****************************************************************************
+ * Emit the blocked source IP. hostonly's normal record shape is just
+ * "<ip>\n"; append the block signals as a trailing "# blocked: ..."
+ * annotation so consumers still see the primary IP field first.
+ ****************************************************************************/
+static void
+hostonly_out_blocked(struct Output *out, FILE *fp,
+                     time_t timestamp, ipaddress ip,
+                     const char *signals)
+{
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+    UNUSEDPARM(out);
+    UNUSEDPARM(timestamp);
+    fprintf(fp, "%s # blocked: %s\n", fmt.string, signals ? signals : "");
+}
+
+
+/****************************************************************************
  ****************************************************************************/
 const struct OutputType hostonly_output = {
     "hostonly",
@@ -74,7 +91,8 @@ const struct OutputType hostonly_output = {
     hostonly_out_open,
     hostonly_out_close,
     hostonly_out_status,
-    hostonly_out_banner
+    hostonly_out_banner,
+    hostonly_out_blocked
 };
 
 

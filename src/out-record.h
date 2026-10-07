@@ -13,6 +13,7 @@ enum OutputRecordType {
     Out_Closed6 = 11,
     Out_Arp6 = 12,
     Out_Banner6 = 13,
+    Out_Blocked = 14,
 
 };
 #endif

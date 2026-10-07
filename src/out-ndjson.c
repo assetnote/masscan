@@ -152,6 +152,29 @@ ndjson_out_banner(struct Output *out, FILE *fp, time_t timestamp,
             );*/
 }
 
+/******************************************************************************
+ ******************************************************************************/
+static void
+ndjson_out_blocked(struct Output *out, FILE *fp,
+                   time_t timestamp, ipaddress ip,
+                   const char *signals)
+{
+    ipaddress_formatted_t fmt;
+    UNUSEDPARM(out);
+
+    /* Signal vocabulary is fixed by main-hostflag.c and contains no
+     * JSON-hostile characters. */
+
+    fprintf(fp, "{");
+    fmt = ipaddress_fmt(ip);
+    fprintf(fp, "\"ip\":\"%s\",", fmt.string);
+    fprintf(fp, "\"timestamp\":\"%u\",\"rec_type\":\"blocked\",\"data\":{\"reason\":\"%s\"}",
+            (unsigned)timestamp,
+            signals ? signals : ""
+            );
+    fprintf(fp, "}\n");
+}
+
 /****************************************************************************
  ****************************************************************************/
 const struct OutputType ndjson_output = {
@@ -160,5 +183,6 @@ const struct OutputType ndjson_output = {
     ndjson_out_open,
     ndjson_out_close,
     ndjson_out_status,
-    ndjson_out_banner
+    ndjson_out_banner,
+    ndjson_out_blocked
 };

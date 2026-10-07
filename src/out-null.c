@@ -72,6 +72,23 @@ null_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 
 /****************************************************************************
+ * Called when a source IP is detected as scanning us and gets blocked.
+ * The null backend intentionally discards everything.
+ ****************************************************************************/
+static void
+null_out_blocked(struct Output *out, FILE *fp,
+                 time_t timestamp, ipaddress ip,
+                 const char *signals)
+{
+    UNUSEDPARM(out);
+    UNUSEDPARM(fp);
+    UNUSEDPARM(timestamp);
+    UNUSEDPARM(ip);
+    UNUSEDPARM(signals);
+}
+
+
+/****************************************************************************
  * This is the only structure exposed to the rest of the system. Everything
  * else in the file is defined 'static' or 'private'.
  ****************************************************************************/
@@ -81,5 +98,6 @@ const struct OutputType null_output = {
     null_out_open,
     null_out_close,
     null_out_status,
-    null_out_banner
+    null_out_banner,
+    null_out_blocked
 };

@@ -201,6 +201,23 @@ grepable_out_banner(struct Output *out, FILE *fp, time_t timestamp,
 
 }
 
+/****************************************************************************
+ * Emits a comment-style record for a blocked/detected scan event. Grepable
+ * is line-oriented plain text, so we use the `# Host: ... Blocked: ...`
+ * form to keep the file parseable while flagging the event.
+ ****************************************************************************/
+static void
+grepable_out_blocked(struct Output *out, FILE *fp,
+                     time_t timestamp, ipaddress ip,
+                     const char *signals)
+{
+    ipaddress_formatted_t fmt = ipaddress_fmt(ip);
+    UNUSEDPARM(out);
+    UNUSEDPARM(timestamp);
+    /* Signal names are a fixed vocabulary from main-hostflag.c — no escaping needed. */
+    fprintf(fp, "# Host: %s\tBlocked: %s\n", fmt.string, signals ? signals : "");
+}
+
 
 
 /****************************************************************************
@@ -213,5 +230,6 @@ const struct OutputType grepable_output = {
     grepable_out_open,
     grepable_out_close,
     grepable_out_status,
-    grepable_out_banner
+    grepable_out_banner,
+    grepable_out_blocked
 };

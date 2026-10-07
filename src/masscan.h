@@ -207,6 +207,24 @@ struct Masscan
     unsigned is_scripting:1;    /* whether scripting is needed */
     unsigned is_capture_servername:1; /* --capture servername */
 
+    /**
+     * --flag-hosts-after: detect and terminate scanning of hosts that
+     * exhibit IDS/tarpit/port-spoofing response patterns. When
+     * threshold_type == 0 the feature is disabled.
+     *
+     * threshold_value is either an absolute open-port count
+     * (threshold_type == 1) or a percentage 1..99
+     * (threshold_type == 2). The absolute effective threshold is
+     * resolved after -p is parsed; see main-conf.c.
+     */
+    struct {
+        unsigned threshold_type; /* 0=disabled, 1=absolute, 2=percent */
+        unsigned threshold_value;
+        /* --zero-window-threshold: window==0 SYN-ACKs required before
+         * the `zero_window` signal fires. 0 means "use the default". */
+        unsigned zero_window_threshold;
+    } hostflag;
+
     /** Packet template options, such as whether we should add a TCP MSS
      * value, or remove it from the packet */
     struct TemplateOptions *templ_opts; /* e.g. --tcpmss */
