@@ -594,16 +594,16 @@ a chronically slow operation on CPUs. Modern CPUs have doubled the speed
 at which they perform this calculation, making `masscan` much faster.
 
 
-# Detecting IDS/tarpit responses (--flag-hosts-after)
+# Detecting IDS/tarpit responses (--detect-ips)
 
 This section documents a fork-specific flag. Upstream masscan does not
 implement this behavior.
 
 ## What it does
 
-When `--flag-hosts-after` is set, masscan tracks per-host state during the
-scan: open-port count, SYN-ACK TCP window sizes, IP TTL values, and dedup
-retransmission counts. If a host trips a passive detection signal, masscan
+When `--detect-ips` is set, masscan tracks per-host state during the scan:
+open-port count, SYN-ACK TCP window sizes, whether the SYN-ACKs carry TCP
+options, and dedup retransmission counts. If a host trips a passive detection signal, masscan
 emits a single `<blocked reason="..."/>` record for that host and suppresses
 further per-port records for it. The intent is to avoid ingesting thousands
 of fake "open port" findings from targets behind Portspoof-style responders,
@@ -612,26 +612,32 @@ or F5 BIG-IP wildcard responders.
 
 ## Usage
 
-Flag any host that reaches 100 open ports:
-
-    # masscan -p 1-65535 --rate 100000 --flag-hosts-after 100 10.0.0.0/24
-
-Flag any host where 50% or more of the probed ports come back open:
-
-    # masscan -p 22,80,443,8080 --flag-hosts-after 50% 10.0.0.0/24
+    # masscan -p 1-65535 --rate 100000 --detect-ips 10.0.0.0/24
 
 ## Flag syntax
 
-* `--flag-hosts-after N` — absolute open-port count. `N` must be strictly
-  less than the size of the resolved `-p` port list. Fails validation at
-  startup otherwise.
-* `--flag-hosts-after N%` — percent of the resolved `-p` port list, with
-  `N` in the range `1..99`.
-* The two forms are mutually exclusive.
-* `--zero-window-threshold N` — how many window==0 SYN-ACKs from a single
-  host are required before `zero_window` fires. Positive integer in the
-  range `1..65535`, default `5`. Has effect only alongside
-  `--flag-hosts-after`.
+* `--detect-ips` — boolean. Enables detection. No value; the former name
+  `--flag-hosts-after` is accepted as an alias.
+* `--tiny-window-threshold N` — how many qualifying SYN-ACKs from a single
+  host are required before `tiny_window` or `no_tcp_options` fires.
+  Positive integer in the range `1..65535`, default `5`. Has effect only
+  alongside `--detect-ips`. The former name `--zero-window-threshold` is
+  accepted as an alias.
+
+### No open-port threshold
+
+Earlier versions took an open-port count (`--flag-hosts-after N`, or `N%` of
+the `-p` list) and emitted a `high_port_count` signal. Both are gone.
+
+A host legitimately running many applications behind one server holds
+hundreds of open ports, so the count is not evidence of a middlebox — and
+suppressing those ports hides real findings. Gating detection on a count
+also made results depend on scan rate, because a middlebox that rate-limits
+under load may never reach a high count: in testing, appliances detected at
+20k pps went undetected at 100k pps for exactly that reason.
+
+Detection now rests entirely on packet-level fingerprints, none of which
+involve how many ports are open.
 
 LZR reports 99.94% zero-window stability across ports, so a single
 observation is statistically defensible; the threshold exists because a
@@ -648,14 +654,6 @@ packet-level signal names:
   observations have accumulated for the host (default 5).
 * `uniform_window` — at least 100 open ports observed AND all SYN-ACKs share
   the same TCP window size. Common with Portspoof and SYN-cookie proxies.
-  Not gated on `--flag-hosts-after`.
-* `uniform_ttl` — same gating, with all responses sharing one IP TTL.
-  Suggests a single middlebox answering for the host.
-* `high_port_count` — host reached the `--flag-hosts-after` threshold. This is
-  a **precondition for the uniformity signals, not a fingerprint of its own**:
-  a host that crosses the threshold without tripping any other signal is NOT
-  flagged, and its ports are reported normally. The signal appears in the
-  reason list only alongside a fingerprint that did fire, as context.
 * `synack_retransmit` — the same (host, port) SYN-ACK was seen at least 5
   times, indicating masscan's ACK is not reaching a real endpoint
   (mid-handshake drop pattern).
@@ -666,7 +664,7 @@ XML output for a flagged host looks like:
 
 ```
 <host addr="10.0.0.5">
-  <blocked reason="zero_window,high_port_count"/>
+  <blocked reason="tiny_window,no_tcp_options"/>
 </host>
 ```
 
@@ -693,22 +691,14 @@ The floor is therefore 100 open ports: a sample size at which a flat window
 *and* a flat TTL across every single response is implausible for a host running
 a genuine mix of services.
 
-The floor is deliberately independent of `--flag-hosts-after`. An earlier
-version gated uniformity behind that threshold, which made detection depend on
-scan rate: middlebox appliances that throttle under load were detected at
-20k pps (599 observed open ports) but missed at 100k pps (111-280 observed),
-because they never crossed the threshold. A fingerprint should not appear and
-disappear with the scan profile.
-
-`zero_window` and `synack_retransmit` have no sample floor at all: both are
+`tiny_window`, `no_tcp_options` and `synack_retransmit` have no sample floor at all: all are
 anomalies that no correctly-functioning host produces, so the observation
 pattern is meaningful on its own.
 
 ## Behavior notes
 
-* When the flag is absent, masscan behavior is unchanged from upstream.
-* Crossing `--flag-hosts-after` alone never flags a host. Only a fingerprint
-  signal does.
+* When `--detect-ips` is absent, masscan behavior is unchanged from upstream:
+  no per-host state table is allocated and the receive path does no extra work.
 * Once a host is flagged, further SYN-ACKs for that host are dropped
   silently. Prior per-port records that were already emitted for the same
   host remain in the output stream; downstream consumers are responsible
