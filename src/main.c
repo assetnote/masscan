@@ -619,7 +619,7 @@ receive_thread(void *v)
             effective_threshold = masscan->hostflag.threshold_value;
         }
         hostflag = hostflag_create(effective_threshold,
-                                   masscan->hostflag.zero_window_threshold);
+                                   masscan->hostflag.tiny_window_threshold);
     }
 
     /*
@@ -1111,11 +1111,14 @@ receive_thread(void *v)
                     if (!is_synack_retransmit) {
                         unsigned tcp_window = (px[parsed.transport_offset + 14] << 8)
                                               | px[parsed.transport_offset + 15];
+                        unsigned has_tcp_options =
+                                    hostflag_synack_has_tcp_options(
+                                        px, length, parsed.transport_offset);
                         unsigned signals = hostflag_observe(
                                     hostflag,
                                     ip_them,
                                     tcp_window,
-                                    parsed.ip_ttl,
+                                    has_tcp_options,
                                     0 /* not a retransmit here */);
                         if (signals != 0) {
                             char reason_buf[128];
@@ -1126,11 +1129,14 @@ receive_thread(void *v)
                         }
                     } else {
                         /* Duplicate SYN-ACK: feed it as a retransmit signal. */
+                        /* Pass a non-tiny window and options-present so the
+                         * retransmit path cannot incidentally trip the
+                         * tiny_window or no_tcp_options counters. */
                         unsigned signals = hostflag_observe(
                                     hostflag,
                                     ip_them,
-                                    0 /* window unused when retransmit */,
-                                    0 /* ttl unused when retransmit */,
+                                    0xFFFF /* window unused when retransmit */,
+                                    1 /* options unused when retransmit */,
                                     1 /* is_synack_retransmit */);
                         if (signals != 0) {
                             char reason_buf[128];

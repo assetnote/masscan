@@ -1617,32 +1617,32 @@ static int SET_flag_hosts_after(struct Masscan *masscan, const char *name, const
     return CONF_OK;
 }
 
-static int SET_zero_window_threshold(struct Masscan *masscan, const char *name, const char *value)
+static int SET_tiny_window_threshold(struct Masscan *masscan, const char *name, const char *value)
 {
     UNUSEDPARM(name);
 
     if (masscan->echo) {
-        if (masscan->hostflag.zero_window_threshold != 0 || masscan->echo_all) {
-            fprintf(masscan->echo, "zero-window-threshold = %u\n",
-                    masscan->hostflag.zero_window_threshold
-                        ? masscan->hostflag.zero_window_threshold
-                        : HOSTFLAG_DEFAULT_ZERO_WINDOW_THRESHOLD);
+        if (masscan->hostflag.tiny_window_threshold != 0 || masscan->echo_all) {
+            fprintf(masscan->echo, "tiny-window-threshold = %u\n",
+                    masscan->hostflag.tiny_window_threshold
+                        ? masscan->hostflag.tiny_window_threshold
+                        : HOSTFLAG_DEFAULT_TINY_WINDOW_THRESHOLD);
         }
         return 0;
     }
     if (value == NULL || value[0] == '\0') {
-        fprintf(stderr, "[-] FAIL: --zero-window-threshold requires a positive integer\n");
+        fprintf(stderr, "[-] FAIL: --tiny-window-threshold requires a positive integer\n");
         exit(1);
     }
     {
         char *endptr = NULL;
         unsigned long parsed = strtoul(value, &endptr, 10);
         if (endptr == value || *endptr != '\0' || parsed < 1 || parsed > 0xFFFF) {
-            fprintf(stderr, "[-] FAIL: --zero-window-threshold: expected a positive integer "
+            fprintf(stderr, "[-] FAIL: --tiny-window-threshold: expected a positive integer "
                             "in range 1-65535 (got '%s')\n", value);
             exit(1);
         }
-        masscan->hostflag.zero_window_threshold = (unsigned)parsed;
+        masscan->hostflag.tiny_window_threshold = (unsigned)parsed;
     }
     return CONF_OK;
 }
@@ -2462,7 +2462,7 @@ struct ConfigParameter config_parameters[] = {
     {"retries",         SET_retries,            0,      {"retry", "max-retries", "max-retry", 0}},
     {"noreset",         SET_noreset,            F_BOOL, {0}},
     {"flag-hosts-after",SET_flag_hosts_after,   0,      {0}},
-    {"zero-window-threshold",SET_zero_window_threshold, 0, {0}},
+    {"tiny-window-threshold",SET_tiny_window_threshold, 0, {"zero-window-threshold",0}},
     {"nmap-payloads",   SET_nmap_payloads,      0,      {"nmap-payload",0}},
     {"nmap-service-probes",SET_nmap_service_probes, 0,  {"nmap-service-probe",0}},
     {"offline",         SET_offline,            F_BOOL, {"notransmit", "nosend", "dry-run", 0}},

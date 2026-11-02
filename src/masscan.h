@@ -220,9 +220,11 @@ struct Masscan
     struct {
         unsigned threshold_type; /* 0=disabled, 1=absolute, 2=percent */
         unsigned threshold_value;
-        /* --zero-window-threshold: window==0 SYN-ACKs required before
-         * the `zero_window` signal fires. 0 means "use the default". */
-        unsigned zero_window_threshold;
+        /* --tiny-window-threshold: SYN-ACKs with a tiny window
+         * (<= HOSTFLAG_TINY_WINDOW_MAX) required before the
+         * `tiny_window` signal fires. 0 means "use the default".
+         * The same threshold gates `no_tcp_options`. */
+        unsigned tiny_window_threshold;
     } hostflag;
 
     /** Packet template options, such as whether we should add a TCP MSS

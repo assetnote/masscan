@@ -646,11 +646,16 @@ packet-level signal names:
 * `zero_window` — SYN-ACK carries TCP window size 0. Signature of iptables
   `-j TARPIT` and LaBrea. Fires once `--zero-window-threshold` such
   observations have accumulated for the host (default 5).
-* `uniform_window` — at least 10 open ports observed AND all SYN-ACKs share
-  the same TCP window size. Common with SYN-cookie proxies.
-* `uniform_ttl` — at least 10 open ports observed AND all responses share
-  the same IP TTL. Suggests a single middlebox answering for the host.
-* `high_port_count` — host reached the `--flag-hosts-after` threshold.
+* `uniform_window` — at least 100 open ports observed AND all SYN-ACKs share
+  the same TCP window size. Common with Portspoof and SYN-cookie proxies.
+  Not gated on `--flag-hosts-after`.
+* `uniform_ttl` — same gating, with all responses sharing one IP TTL.
+  Suggests a single middlebox answering for the host.
+* `high_port_count` — host reached the `--flag-hosts-after` threshold. This is
+  a **precondition for the uniformity signals, not a fingerprint of its own**:
+  a host that crosses the threshold without tripping any other signal is NOT
+  flagged, and its ports are reported normally. The signal appears in the
+  reason list only alongside a fingerprint that did fire, as context.
 * `synack_retransmit` — the same (host, port) SYN-ACK was seen at least 5
   times, indicating masscan's ACK is not reaching a real endpoint
   (mid-handshake drop pattern).
@@ -670,9 +675,40 @@ JSON, NDJSON, grepable, text, binary, Redis). Backends that lack a natural
 host-level record produce a best-effort representation (for example, a
 comment line in `grepable`).
 
+## Why the uniformity floor is high
+
+The TCP window advertised in a SYN-ACK is chosen by the responder's kernel
+(receive-buffer autotuning, MTU, window scaling), not by the listening
+application. Every port on a single-stack host therefore reports the same
+window whether the ports are real services or fabricated by a middlebox.
+IP TTL is likewise a property of the host and the network path.
+
+Uniformity across ports consequently means "these responses came from one TCP
+stack", which is true of any ordinary server. A host running many applications
+behind one machine can legitimately hold several hundred open ports with a
+perfectly flat window. Testing a 10-port floor against 200 real hosts flagged
+64 of them, none of which were middleboxes.
+
+The floor is therefore 100 open ports: a sample size at which a flat window
+*and* a flat TTL across every single response is implausible for a host running
+a genuine mix of services.
+
+The floor is deliberately independent of `--flag-hosts-after`. An earlier
+version gated uniformity behind that threshold, which made detection depend on
+scan rate: middlebox appliances that throttle under load were detected at
+20k pps (599 observed open ports) but missed at 100k pps (111-280 observed),
+because they never crossed the threshold. A fingerprint should not appear and
+disappear with the scan profile.
+
+`zero_window` and `synack_retransmit` have no sample floor at all: both are
+anomalies that no correctly-functioning host produces, so the observation
+pattern is meaningful on its own.
+
 ## Behavior notes
 
 * When the flag is absent, masscan behavior is unchanged from upstream.
+* Crossing `--flag-hosts-after` alone never flags a host. Only a fingerprint
+  signal does.
 * Once a host is flagged, further SYN-ACKs for that host are dropped
   silently. Prior per-port records that were already emitted for the same
   host remain in the output stream; downstream consumers are responsible
