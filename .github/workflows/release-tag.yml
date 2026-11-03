@@ -1,0 +1,81 @@
+name: Release tag
+
+# Creates a semver tag on every push to master so downstream consumers can pin
+# a specific fork build. cs-masscan-remote's Ansible worker role deploys
+# masscan from `worker_masscan_version`, which should point at a tag from here
+# rather than a moving branch.
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  # github.rest.git.createRef writes a ref. The default token happens to have
+  # write access in this org, but declaring it keeps the workflow working if
+  # that default is ever tightened, and documents why the token is needed.
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout masscan
+        uses: actions/checkout@v4
+        with:
+          # svu derives the next version from the existing tag history, so the
+          # checkout must include it. actions/checkout defaults to a depth-1
+          # fetch with no tags, under which svu sees no history and restarts
+          # numbering from v0.0.1 -- which is what happened on the first run of
+          # the equivalent workflow in cs-masscan-remote (it tagged v0.0.1 on a
+          # repo already at v0.30.0).
+          fetch-depth: 0
+          fetch-tags: true
+
+      # The binary runs on every production scanner, so refuse to tag a commit
+      # that does not build or whose self-test fails. hostflag_selftest()
+      # covers the per-host state table and each detection signal; it sends no
+      # packets, so it is safe in CI.
+      - name: Install libpcap-dev
+        run: sudo apt-get install -y libpcap-dev
+
+      - name: Build
+        run: make -j"$(nproc)"
+
+      - name: Run self-test
+        run: ./bin/masscan --selftest
+
+      - name: Create tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process')
+            const svu_url = "https://github.com/caarlos0/svu/releases/download/v3.0.0/svu_3.0.0_linux_amd64.tar.gz"
+            execSync(`wget -qO- "${svu_url}" | tar xvz > /dev/null 2>&1`, { shell: '/bin/bash' })
+
+            // `next` (alias `n`) is the only subcommand this relies on; it is
+            // documented and stable. --always forces a bump even when no
+            // conventional-commit prefix is present, so a merge without a
+            // feat:/fix: subject still produces a patch release rather than
+            // repeating the current tag.
+            const next = execSync('./svu next --always').toString().trim()
+            console.log(`Next version: ${next}`)
+
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/tags/${next}`,
+                sha: context.sha,
+              })
+              console.log(`Created tag ${next}`)
+            } catch (err) {
+              // A re-run of the same commit, or two pushes landing together,
+              // can race here. An existing tag is not a failure.
+              if (err.status === 422) {
+                console.log(`Tag ${next} already exists; nothing to do.`)
+                return
+              }
+              throw err
+            }
