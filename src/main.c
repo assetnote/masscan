@@ -23,7 +23,7 @@
 #include "main-status.h"        /* printf() regular status updates */
 #include "main-throttle.h"      /* rate limit */
 #include "main-dedup.h"         /* ignore duplicate responses */
-#include "main-hostflag.h"      /* --flag-hosts-after: IDS/tarpit detection */
+#include "main-hostflag.h"      /* --detect-ips: IDS/tarpit detection */
 #include "main-ptrace.h"        /* for nmap --packet-trace feature */
 #include "main-globals.h"       /* all the global variables in the program */
 #include "main-readrange.h"
@@ -607,19 +607,8 @@ receive_thread(void *v)
      * feature entirely (hostflag_create returns NULL, and every call site
      * checks for that).
      */
-    if (masscan->hostflag.threshold_type != 0) {
-        unsigned effective_threshold = 0;
-        unsigned port_count = rangelist_count(&masscan->targets.ports);
-        if (masscan->hostflag.threshold_type == HOSTFLAG_THRESHOLD_PERCENT) {
-            /* percent of resolved -p list; rounded down but floored at 1 */
-            effective_threshold = (port_count * masscan->hostflag.threshold_value) / 100;
-            if (effective_threshold == 0)
-                effective_threshold = 1;
-        } else {
-            effective_threshold = masscan->hostflag.threshold_value;
-        }
-        hostflag = hostflag_create(effective_threshold,
-                                   masscan->hostflag.tiny_window_threshold);
+    if (masscan->hostflag.is_enabled) {
+        hostflag = hostflag_create(masscan->hostflag.tiny_window_threshold);
     }
 
     /*

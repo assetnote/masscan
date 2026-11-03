@@ -218,12 +218,13 @@ struct Masscan
      * resolved after -p is parsed; see main-conf.c.
      */
     struct {
-        unsigned threshold_type; /* 0=disabled, 1=absolute, 2=percent */
-        unsigned threshold_value;
-        /* --tiny-window-threshold: SYN-ACKs with a tiny window
-         * (<= HOSTFLAG_TINY_WINDOW_MAX) required before the
-         * `tiny_window` signal fires. 0 means "use the default".
-         * The same threshold gates `no_tcp_options`. */
+        /* --detect-ips: enables IDS/tarpit/port-spoofer detection. The
+         * feature is entirely opt-in; when this is 0 no per-host state is
+         * allocated and the receive path is unchanged from upstream. */
+        unsigned is_enabled;
+        /* --tiny-window-threshold: observations required before the
+         * `tiny_window` or `no_tcp_options` signals fire. 0 means
+         * "use the default". */
         unsigned tiny_window_threshold;
     } hostflag;
 
